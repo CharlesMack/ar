@@ -13,9 +13,9 @@
     <canvas id="renderCanvas"></canvas>
     
     <!-- Use compatible CDN versions for script tags -->
-    <script src="https://cdn.jsdelivr.net/npm/babylonjs@latest/babylon.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/babylonjs-loaders@latest/babylonjs.loaders.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/babylonjs-gui@latest/babylon.gui.min.js"></script>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+    <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
     
     <!-- Use a CDN version of cannon-es that exposes the CANNON global -->
     <script src="https://cdn.jsdelivr.net/npm/cannon-es@latest/dist/cannon-es.min.js"></script>
@@ -70,11 +70,10 @@
                 detectedMeshes.set(plane.id, planeMesh);
 
                 // Create cannon-es static body
+                const planeShape = new CANNON.Box(new CANNON.Vec3(plane.width / 2, 0.01, plane.height / 2));
                 const cannonBody = new CANNON.Body({
                     mass: 0, // static body
-                    shape: new CANNON.Box(new CANNON.Vec3(0.5, 0.01, 0.5)),
-                    position: new CANNON.Vec3(planeMesh.position.x, planeMesh.position.y, planeMesh.position.z),
-                    quaternion: new CANNON.Quaternion(planeMesh.rotationQuaternion.x, planeMesh.rotationQuaternion.y, planeMesh.rotationQuaternion.z, planeMesh.rotationQuaternion.w)
+                    shape: planeShape,
                 });
                 physicsWorld.addBody(cannonBody);
                 planeColliders.set(plane.id, cannonBody);
@@ -94,6 +93,10 @@
                 if (cannonBody) {
                     cannonBody.position = new CANNON.Vec3(plane.position.x, plane.position.y, plane.position.z);
                     cannonBody.quaternion = new CANNON.Quaternion(plane.rotationQuaternion.x, plane.rotationQuaternion.y, plane.rotationQuaternion.z, plane.rotationQuaternion.w);
+                    
+                    // Update shape if size changed
+                    const newPlaneShape = new CANNON.Box(new CANNON.Vec3(plane.width / 2, 0.01, plane.height / 2));
+                    cannonBody.addShape(newPlaneShape);
                 }
             });
 
