@@ -12,13 +12,18 @@
 <body>
     <canvas id="renderCanvas"></canvas>
     
-    <!-- Babylon.js, cannon-es, and their dependencies via CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/babylonjs@5.0.0/babylon.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/babylonjs-loaders@5.0.0/babylonjs.loaders.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/babylonjs-gui@5.0.0/babylon.gui.min.js"></script>
+    <!-- Use compatible CDN versions for script tags -->
+    <script src="https://cdn.jsdelivr.net/npm/babylonjs@latest/babylon.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/babylonjs-loaders@latest/babylonjs.loaders.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/babylonjs-gui@latest/babylon.gui.min.js"></script>
     
+    <!-- Use a CDN version of cannon-es that exposes the CANNON global -->
+    <script src="https://cdn.jsdelivr.net/npm/cannon-es@latest/dist/cannon-es.min.js"></script>
+
     <script>
+        // Ensure the CANNON variable is available to Babylon.js
+        window.CANNON = CANNON;
+        
         const canvas = document.getElementById("renderCanvas");
         const engine = new BABYLON.Engine(canvas, true);
         
@@ -33,7 +38,7 @@
             scene = new BABYLON.Scene(engine);
             scene.gravity = new BABYLON.Vector3(0, -9.81, 0);
 
-            // Initialize cannon-es physics plugin
+            // Initialize cannon-es physics plugin with the CANNON global
             const physicsPlugin = new BABYLON.CannonJSPlugin(true, 10, CANNON);
             scene.enablePhysics(scene.gravity, physicsPlugin);
             physicsWorld = physicsPlugin.world;
@@ -84,13 +89,11 @@
                     planeMesh.scaling = new BABYLON.Vector3(plane.width, plane.height, 1);
                 }
                 
-                // Update cannon-es body (more complex for polygons, but simple for a cuboid)
+                // Update cannon-es body
                 const cannonBody = planeColliders.get(plane.id);
                 if (cannonBody) {
                     cannonBody.position = new CANNON.Vec3(plane.position.x, plane.position.y, plane.position.z);
                     cannonBody.quaternion = new CANNON.Quaternion(plane.rotationQuaternion.x, plane.rotationQuaternion.y, plane.rotationQuaternion.z, plane.rotationQuaternion.w);
-                    // For a more accurate shape, you would replace the old body with a new one
-                    // that uses a ConvexPolyhedron or heightfield, derived from the polygon points.
                 }
             });
 
