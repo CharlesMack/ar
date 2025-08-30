@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebXR Plane Detection + Rapier.js (CDN)</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+    
+    <!-- Use an import map to define module paths for CDN dependencies -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/",
+                "rapier3d-compat": "https://cdn.skypack.dev/@dimforge/rapier3d-compat"
+            }
+        }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import * as THREE from 'three';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
+        import RAPIER from 'rapier3d-compat';
+
+        let camera, scene, renderer;
+        let xrReferenceSpace;
+
+        // Rapier.js setup
+        let physicsWorld;
+        const rapierBodies = new Map(); // Store Rapier bodies keyed by XRPlane ID
+        const activeXRPlanes = new Map();
+
+        async function init() {
+            // Correctly load Rapier and create physics world by passing an empty object
+            await RAPIER.init({});
+            physicsWorld = new RAPIER.World({ x: 0.0, y: -9.81, z: 0.0 });
+            
+            // Three.js scene setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // ARButton to start the session with plane-detection
+            const options = { requiredFeatures: ['plane-detection', 'local-floor'] };
+            document.body.appendChild(ARButton.createButton(renderer, options));
+
+            // Set up a simple dynamic cube
+            const dynamicBodyDesc = RAPIER.RigidBodyDesc.dynamic();
+            const dynamicBody = physicsWorld.createRigidBody(dynamicBodyDesc);
+            dynamicBody.setTranslation({ x: 0, y: 1.5, z: -2 });
+
+            const cubeSize = 0.2;
+            const cubeColliderDesc = RAPIER.ColliderDesc.cuboid(cubeSize / 2, cubeSize / 2, cubeSize / 2);
+            physicsWorld.createCollider(cubeColliderDesc, dynamicBody);
+            
+            const cubeMesh = new THREE.Mesh(
+                new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize),
+                new THREE.MeshNormalMaterial()
+            );
+            scene.add(cubeMesh);
+            
+            // Store the dynamic body for updates
+            rapierBodies.set('falling-cube', { body: dynamicBody, mesh: cubeMesh });
+
+            // Event listener for AR session start
+            renderer.xr.addEventListener('sessionstart', () => {
+                xrReferenceSpace = renderer.xr.getReferenceSpace();
+                animate();
+            });
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            renderer.setAnimationLoop(render);
+        }
+
+        function render(timestamp, frame) {
+            if (!frame) return;
+
+            // Process detected planes from the WebXR frame
+            const detectedPlanes = frame.detectedPlanes;
+            if (detectedPlanes) {
+                // Remove planes that are no longer detected
+                activeXRPlanes.forEach((planeContext, xrPlane) => {
+                    if (!detectedPlanes.has(xrPlane)) {
+                        physicsWorld.removeRigidBody(planeContext.body);
+                        scene.remove(planeContext.mesh);
+                        activeXRPlanes.delete(xrPlane);
+                    }
+                });
+
+                // Add or update colliders for detected planes
+                detectedPlanes.forEach(xrPlane => {
+                    const planePose = frame.getPose(xrPlane.planeSpace, xrReferenceSpace);
+                    if (planePose) {
+                        if (!activeXRPlanes.has(xrPlane)) {
+                            // Create new Three.js mesh and Rapier collider
+                            const planeMesh = new THREE.Mesh(
+                                new THREE.PlaneGeometry(1, 1),
+                                new THREE.MeshStandardMaterial({
+                                    color: 0x888888,
+                                    side: THREE.DoubleSide,
+                                    transparent: true,
+                                    opacity: 0.5
+                                })
+                            );
+                            scene.add(planeMesh);
+
+                            const planeSize = xrPlane.polygon.reduce((bounds, point) => {
+                                bounds.x = Math.max(bounds.x, Math.abs(point.x));
+                                bounds.z = Math.max(bounds.z, Math.abs(point.z));
+                                return bounds;
+                            }, { x: 0, z: 0 });
+
+                            const colliderDesc = RAPIER.ColliderDesc.cuboid(planeSize.x, 0.01, planeSize.z);
+                            const rigidBodyDesc = RAPIER.RigidBodyDesc.fixed();
+                            const planeBody = physicsWorld.createRigidBody(rigidBodyDesc);
+                            physicsWorld.createCollider(colliderDesc, planeBody);
+
+                            activeXRPlanes.set(xrPlane, {
+                                mesh: planeMesh,
+                                body: planeBody,
+                                lastUpdate: xrPlane.lastChangedTime
+                            });
+                        }
+
+                        // Update existing plane's position
+                        const planeContext = activeXRPlanes.get(xrPlane);
+                        if (planeContext.lastUpdate < xrPlane.lastChangedTime) {
+                            // The plane's size or position has changed; update the physics body.
+                            const planeSize = xrPlane.polygon.reduce((bounds, point) => {
+                                bounds.x = Math.max(bounds.x, Math.abs(point.x));
+                                bounds.z = Math.max(bounds.z, Math.abs(point.z));
+                                return bounds;
+                            }, { x: 0, z: 0 });
+
+                            // The simplest way to update is to remove and re-add the collider.
+                            // More complex geometry (trimesh) updates require different methods.
+                            physicsWorld.removeRigidBody(planeContext.body);
+                            const colliderDesc = RAPIER.ColliderDesc.cuboid(planeSize.x, 0.01, planeSize.z);
+                            const rigidBodyDesc = RAPIER.RigidBodyDesc.fixed();
+                            const newPlaneBody = physicsWorld.createRigidBody(rigidBodyDesc);
+                            physicsWorld.createCollider(colliderDesc, newPlaneBody);
+                            
+                            planeContext.body = newPlaneBody;
+                            planeContext.lastUpdate = xrPlane.lastChangedTime;
+                        }
+
+                        // Update Three.js mesh pose
+                        planeContext.mesh.position.set(planePose.transform.position.x, planePose.transform.position.y, planePose.transform.position.z);
+                        planeContext.mesh.quaternion.set(planePose.transform.orientation.x, planePose.transform.orientation.y, planePose.transform.orientation.z, planePose.transform.orientation.w);
+                    }
+                });
+            }
+
+            // Step the physics world
+            physicsWorld.step();
+
+            // Update the dynamic cube's visual position
+            const cubeData = rapierBodies.get('falling-cube');
+            if (cubeData) {
+                const rapierPosition = cubeData.body.translation();
+                const rapierRotation = cubeData.body.rotation();
+                cubeData.mesh.position.set(rapierPosition.x, rapierPosition.y, rapierPosition.z);
+                cubeData.mesh.quaternion.set(rapierRotation.x, rapierRotation.y, rapierRotation.z, rapierRotation.w);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
